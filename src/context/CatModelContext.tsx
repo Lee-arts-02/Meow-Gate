@@ -11,6 +11,7 @@ import { predictUserDrawingGate, predictionToGateResult } from '../logic/predict
 import {
   clearSessionModelSingleton,
   getDebugInfo,
+  getIsModelReady,
   getStatusMessage,
   getTrainingMessageForProgress,
   initializeCatModel,
