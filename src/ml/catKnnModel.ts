@@ -45,7 +45,7 @@ export type RebuildModelOptions = {
 let storedExamples: StoredExample[] = [];
 let modelStatus: ModelStatus = 'idle';
 let statusMessage = 'Ready to compare.';
-let isModelReady = false;
+const modelState = { isModelReady: false };
 let lastPrediction: GatePrediction | null = null;
 let lastTrainingEvaluationLeakCount = 0;
 
@@ -101,8 +101,8 @@ export function getStatusMessage(): string {
   return statusMessage;
 }
 
-export function getIsModelReady(): boolean {
-  return isModelReady;
+export function isModelReady(): boolean {
+  return modelState.isModelReady;
 }
 
 export function getLastPrediction(): GatePrediction | null {
@@ -118,7 +118,7 @@ export function getDebugInfo() {
   return {
     modelStatus,
     statusMessage,
-    isModelReady,
+    isModelReady: isModelReady(),
     trainingExamples: storedExamples.length,
     initialMemoryCats: initial,
     learnerMemoryCats: learner,
@@ -197,7 +197,7 @@ function computePredictionMetrics(neighbors: ScoredTrainingNeighbor[]) {
 }
 
 export async function runModelSanityCheck(): Promise<void> {
-  if (!isModelReady) return;
+  if (!isModelReady()) return;
 
   const results: Array<{
     imageId: string;
@@ -283,7 +283,7 @@ export async function rebuildModelFromMemoryBook(
   const includeLearnerExamples = options.includeLearnerExamples ?? true;
   setStatus('loading', getTrainingMessageForProgress(0));
   storedExamples = [];
-  isModelReady = false;
+  modelState.isModelReady = false;
 
   const rawEntries = buildTrainingExamples(memoryState, includeLearnerExamples);
   lastTrainingEvaluationLeakCount = countEvaluationCatsInTraining(rawEntries);
@@ -318,7 +318,7 @@ export async function rebuildModelFromMemoryBook(
 
   await runModelSanityCheck();
 
-  isModelReady = true;
+  modelState.isModelReady = true;
   setStatus('ready', getTrainingMessageForProgress(100));
 }
 
@@ -334,7 +334,7 @@ export type PredictGateMeta = {
 };
 
 export async function predictGate(image: string, meta?: PredictGateMeta): Promise<GatePrediction> {
-  if (!isModelReady) throw new Error('Model is not ready');
+  if (!isModelReady()) throw new Error('Model is not ready');
 
   const queryVector = await imageToVector(image);
   const fullRanked = rankBySimilarity(queryVector);
@@ -407,7 +407,7 @@ export async function predictCat(image: string, meta?: PredictGateMeta): Promise
 /** Clear module singleton between sessions (e.g. full page reload). */
 export function clearSessionModelSingleton(): void {
   storedExamples = [];
-  isModelReady = false;
+  modelState.isModelReady = false;
   lastPrediction = null;
   lastTrainingEvaluationLeakCount = 0;
   setStatus('idle', 'Ready to compare.');

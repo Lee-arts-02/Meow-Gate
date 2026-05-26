@@ -15,6 +15,7 @@ import {
   getTrainingMessageForProgress,
   initializeCatModel,
   isDebugMode,
+  isModelReady,
   predictGate,
   rebuildModelFromMemoryBook,
 } from '../ml/catKnnModel';
@@ -62,10 +63,9 @@ export function CatModelProvider({ children }: { children: ReactNode }) {
   const [debugInfo, setDebugInfo] = useState(getDebugInfo());
 
   const syncStatus = useCallback(() => {
-    const debug = getDebugInfo();
-    setModelReady(debug.isModelReady);
+    setModelReady(isModelReady());
     setStatusMessage(getStatusMessage());
-    setDebugInfo(debug);
+    setDebugInfo(getDebugInfo());
   }, []);
 
   useEffect(() => {

@@ -3,7 +3,7 @@ import { analyzeDrawing } from './analyzeDrawing';
 import type { EvaluationCat } from '../data/evaluationCats';
 import type { CatMemoryState } from '../types';
 import {
-  getIsModelReady,
+  isModelReady,
   predictGate,
   rebuildModelFromMemoryBook,
   type PredictGateMeta,
@@ -95,7 +95,7 @@ export async function predictGateFromCurrentModel(
   image: string,
   meta?: PredictGateMeta,
 ): Promise<GateResult> {
-  if (!getIsModelReady()) throw new Error('Meow Gate needs to finish learning first.');
+  if (!isModelReady()) throw new Error('Meow Gate needs to be trained first.');
   return predictionToGateResult(await predictGate(image, meta));
 }
 
@@ -145,7 +145,7 @@ export async function predictEvaluationGate(
   _memoryState: CatMemoryState,
   _includeLearnerExamples: boolean,
 ): Promise<GateResult> {
-  if (!getIsModelReady()) throw new Error('Meow Gate needs to finish learning first.');
+  if (!isModelReady()) throw new Error('Meow Gate needs to be trained first.');
   return predictionToGateResult(
     await predictGate(evaluationCat.image, { logTargetId: evaluationCat.id }),
   );
