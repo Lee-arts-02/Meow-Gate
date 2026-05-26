@@ -11,7 +11,6 @@ import { predictUserDrawingGate, predictionToGateResult } from '../logic/predict
 import {
   clearSessionModelSingleton,
   getDebugInfo,
-  getIsModelReady,
   getStatusMessage,
   getTrainingMessageForProgress,
   initializeCatModel,
@@ -63,9 +62,10 @@ export function CatModelProvider({ children }: { children: ReactNode }) {
   const [debugInfo, setDebugInfo] = useState(getDebugInfo());
 
   const syncStatus = useCallback(() => {
-    setModelReady(getIsModelReady());
+    const debug = getDebugInfo();
+    setModelReady(debug.isModelReady);
     setStatusMessage(getStatusMessage());
-    setDebugInfo(getDebugInfo());
+    setDebugInfo(debug);
   }, []);
 
   useEffect(() => {
