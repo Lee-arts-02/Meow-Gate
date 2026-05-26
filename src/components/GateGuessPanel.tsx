@@ -46,7 +46,7 @@ export function GateGuessPanel({ result, showConfidenceNote = true }: GateGuessP
           </div>
           {showConfidenceNote && (
             <p className="mt-2 text-sm text-ink/65">
-              Confidence means how sure I feel. It does not always mean I am right.
+              Confidence means how sure Meow Gate feels. It does not always match what you expect.
             </p>
           )}
         </div>

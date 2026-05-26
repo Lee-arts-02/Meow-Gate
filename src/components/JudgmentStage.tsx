@@ -153,7 +153,7 @@ export function JudgmentStage({
         </div>
 
         <motion.div
-          key={`walk-${resetKey}`}
+          key={String(resetKey)}
           className="user-cat-wrapper absolute bottom-12 md:bottom-14"
           initial={{ left: '-20%' }}
           animate={{ left: '40%' }}

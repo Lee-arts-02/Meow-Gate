@@ -285,6 +285,7 @@ export function CatGateScene({
           closestResult={closestResult}
           rankedResults={rankedResults}
           nearestExamples={gateResult.nearestExamples}
+          knnNearestIsNotCat={gateResult.knnNearestIsNotCat}
           clueTags={clueTags}
           gateOpens={gateOpens}
           hasStudentExamples={memoryState.studentExamples.length > 0}

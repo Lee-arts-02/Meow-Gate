@@ -9,6 +9,7 @@ import {
   isEvaluationTrainingExample,
 } from './trainingDataGuard';
 import { compareImageSimilarity } from '../ml/imagePreprocess';
+import type { NeighborResult } from '../ml/modelTypes';
 
 export type MemoryExample = {
   id: string;
@@ -91,6 +92,19 @@ export async function rankMemoryExamples(
   );
 
   return scored.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+/** Map a KNN Memory Book neighbor into the shape used by Why / overlay UI. */
+export function neighborResultToClosestMemoryResult(n: NeighborResult): ClosestMemoryResult {
+  return {
+    example: {
+      id: n.id,
+      image: n.image,
+      source: n.source === 'learner' ? 'learner-memory' : 'initial-memory',
+    },
+    score: n.similarity,
+    label: similarityLabelFromScore(n.similarity),
+  };
 }
 
 export { initialMemoryBookCats };

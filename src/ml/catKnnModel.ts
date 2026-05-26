@@ -9,19 +9,37 @@ import {
 } from '../logic/trainingDataGuard';
 import type { CatMemoryState } from '../types';
 import { imageToVector, vectorCosineSimilarity } from './imagePreprocess';
-import type { GatePrediction, ModelStatus, NearestExample, TrainingExample } from './modelTypes';
+import type {
+  GatePrediction,
+  ModelStatus,
+  NeighborResult,
+  TrainingExample,
+  TrainingLabel,
+  TrainingSource,
+} from './modelTypes';
 
 type StoredExample = TrainingExample & { vector: number[] };
+
+/** Tunable KNN gate thresholds (cosine similarity in [0, 1]). */
+export const KNN_GATE_THRESHOLDS = {
+  OPEN_MIN_CAT_VOTE_RATIO: 0.65,
+  OPEN_MIN_BEST_SIMILARITY: 0.5,
+  PAUSE_MIN_CAT_VOTE_RATIO: 0.45,
+  PAUSE_MIN_BEST_SIMILARITY: 0.35,
+} as const;
+
+type ScoredTrainingNeighbor = {
+  id: string;
+  image: string;
+  label: TrainingLabel;
+  source: TrainingSource;
+  distance: number;
+  similarity: number;
+};
 
 export type RebuildModelOptions = {
   includeLearnerExamples?: boolean;
   onProgress?: (progress: number) => void;
-};
-
-type CalibrationThresholds = {
-  openThreshold: number;
-  pauseThreshold: number;
-  standardSelfSimilarity: number;
 };
 
 let storedExamples: StoredExample[] = [];
@@ -30,17 +48,42 @@ let statusMessage = 'Ready to compare.';
 let isModelReady = false;
 let lastPrediction: GatePrediction | null = null;
 let lastTrainingEvaluationLeakCount = 0;
-let calibration: CalibrationThresholds = {
-  openThreshold: 0.55,
-  pauseThreshold: 0.45,
-  standardSelfSimilarity: 0.6,
-};
 
 const KNN_K = 5;
 
 function setStatus(status: ModelStatus, message: string) {
   modelStatus = status;
   statusMessage = message;
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+function toNeighborResult(n: ScoredTrainingNeighbor): NeighborResult {
+  const source: NeighborResult['source'] =
+    n.source === 'initial-memory' ? 'initial' : n.source === 'learner-memory' ? 'learner' : 'negative';
+  return {
+    id: n.id,
+    image: n.image,
+    label: n.label,
+    source,
+    similarity: n.similarity,
+  };
+}
+
+export function resolveKnnGateState(
+  catVoteRatio: number,
+  bestSimilarity: number,
+): GatePrediction['gateState'] {
+  const t = KNN_GATE_THRESHOLDS;
+  if (catVoteRatio >= t.OPEN_MIN_CAT_VOTE_RATIO && bestSimilarity >= t.OPEN_MIN_BEST_SIMILARITY) {
+    return 'open';
+  }
+  if (catVoteRatio >= t.PAUSE_MIN_CAT_VOTE_RATIO && bestSimilarity >= t.PAUSE_MIN_BEST_SIMILARITY) {
+    return 'pause';
+  }
+  return 'close';
 }
 
 export function isDebugMode(): boolean {
@@ -82,13 +125,13 @@ export function getDebugInfo() {
     negativeExamples: negative,
     evaluationCatsInTraining: evaluationInTraining,
     lastTrainingEvaluationLeakCount: lastTrainingEvaluationLeakCount,
-    calibration,
+    knnThresholds: KNN_GATE_THRESHOLDS,
     lastPrediction,
   };
 }
 
 export function getTrainingMessageForProgress(progress: number): string {
-  if (progress >= 100) return 'Meow Gate is ready to test.';
+  if (progress >= 100) return 'Now Meow Gate can compare new cats with your examples.';
   if (progress >= 66) return 'Meow Gate is comparing shapes…';
   if (progress >= 33) return 'Meow Gate is learning from your examples…';
   return 'Meow Gate is reading the Memory Book…';
@@ -102,13 +145,13 @@ function confidenceLabelFromScore(
   confidence: number,
   gateState: GatePrediction['gateState'],
 ): GatePrediction['confidenceLabel'] {
-  if (gateState === 'open' && confidence >= 0.65) return 'high';
-  if (confidence >= 0.75) return 'high';
-  if (confidence >= 0.45) return 'medium';
+  if (gateState === 'open' && confidence >= 0.55) return 'high';
+  if (confidence >= 0.72) return 'high';
+  if (confidence >= 0.38) return 'medium';
   return 'low';
 }
 
-function rankBySimilarity(queryVector: number[]): NearestExample[] {
+function rankBySimilarity(queryVector: number[]): ScoredTrainingNeighbor[] {
   return storedExamples
     .map((example) => {
       const similarity = vectorCosineSimilarity(queryVector, example.vector);
@@ -124,7 +167,13 @@ function rankBySimilarity(queryVector: number[]): NearestExample[] {
     .sort((a, b) => b.similarity - a.similarity);
 }
 
-function computePredictionMetrics(neighbors: NearestExample[]) {
+function findFirstMemoryBookCat(sorted: ScoredTrainingNeighbor[]): ScoredTrainingNeighbor | undefined {
+  return sorted.find(
+    (n) => n.label === 'cat' && (n.source === 'initial-memory' || n.source === 'learner-memory'),
+  );
+}
+
+function computePredictionMetrics(neighbors: ScoredTrainingNeighbor[]) {
   const top = neighbors.slice(0, KNN_K);
   const catScore = top
     .filter((item) => item.label === 'cat')
@@ -134,69 +183,17 @@ function computePredictionMetrics(neighbors: NearestExample[]) {
     .reduce((sum, item) => sum + item.similarity, 0);
   const voteDenominator = catScore + nonCatScore;
   const catVoteRatio = voteDenominator > 0 ? catScore / voteDenominator : 0;
-  const nearestSimilarity = top[0]?.similarity ?? 0;
-  const confidence = catVoteRatio * nearestSimilarity;
+  const bestSimilarity = top[0]?.similarity ?? 0;
+
+  const confidence = clamp01(catVoteRatio * 0.6 + bestSimilarity * 0.4);
 
   return {
     top,
     catVoteRatio,
-    nearestSimilarity,
+    bestSimilarity,
     confidence,
     nearest: top[0],
   };
-}
-
-function resolveGateState(
-  catVoteRatio: number,
-  nearestSimilarity: number,
-  nearest?: NearestExample,
-): GatePrediction['gateState'] {
-  const { openThreshold, pauseThreshold } = calibration;
-
-  if (
-    nearest?.label === 'cat' &&
-    nearest.source === 'initial-memory' &&
-    nearestSimilarity >= openThreshold
-  ) {
-    return 'open';
-  }
-
-  if (catVoteRatio >= 0.6 && nearestSimilarity >= openThreshold) {
-    return 'open';
-  }
-
-  if (catVoteRatio >= 0.45 || nearestSimilarity >= pauseThreshold) {
-    return 'pause';
-  }
-
-  return 'close';
-}
-
-async function calibrateThresholds(): Promise<void> {
-  const initialExamples = storedExamples.filter((item) => item.source === 'initial-memory');
-  if (initialExamples.length === 0) return;
-
-  let similaritySum = 0;
-
-  for (const example of initialExamples) {
-    let bestOther = 0;
-    for (const other of initialExamples) {
-      if (other.id === example.id) continue;
-      const similarity = vectorCosineSimilarity(example.vector, other.vector);
-      if (similarity > bestOther) bestOther = similarity;
-    }
-    similaritySum += bestOther;
-  }
-
-  const standardSelfSimilarity = similaritySum / initialExamples.length;
-  const openThreshold = Math.max(0.45, standardSelfSimilarity * 0.65);
-  const pauseThreshold = openThreshold * 0.75;
-
-  calibration = { openThreshold, pauseThreshold, standardSelfSimilarity };
-
-  if (isDebugMode()) {
-    console.log('[Meow Gate] Calibration:', calibration);
-  }
 }
 
 export async function runModelSanityCheck(): Promise<void> {
@@ -213,18 +210,15 @@ export async function runModelSanityCheck(): Promise<void> {
   for (const cat of initialMemoryBookCats) {
     try {
       const vector = await imageToVector(cat.image);
-      const ranked = rankBySimilarity(vector);
-      const metrics = computePredictionMetrics(ranked);
-      const gateState = resolveGateState(
-        metrics.catVoteRatio,
-        metrics.nearestSimilarity,
-        metrics.nearest,
-      );
+      const fullRanked = rankBySimilarity(vector);
+      const top = fullRanked.slice(0, KNN_K);
+      const metrics = computePredictionMetrics(top);
+      const gateState = resolveKnnGateState(metrics.catVoteRatio, metrics.bestSimilarity);
 
       results.push({
         imageId: cat.id,
         closestNeighborId: metrics.nearest?.id ?? 'none',
-        similarity: metrics.nearestSimilarity,
+        similarity: metrics.bestSimilarity,
         gateState,
         confidence: metrics.confidence,
       });
@@ -243,15 +237,7 @@ export async function runModelSanityCheck(): Promise<void> {
   }
 
   if (openCount < Math.ceil(initialMemoryBookCats.length * 0.7)) {
-    console.warn('[Meow Gate] Model calibration failed: standard cats are not recognized.');
-    calibration = {
-      ...calibration,
-      openThreshold: Math.max(0.4, calibration.openThreshold * 0.9),
-      pauseThreshold: Math.max(0.35, calibration.pauseThreshold * 0.9),
-    };
-    if (isDebugMode()) {
-      console.log('[Meow Gate] Adjusted thresholds:', calibration);
-    }
+    console.warn('Sanity check failed: Memory Book cats are not recognized.');
   }
 }
 
@@ -303,12 +289,19 @@ export async function rebuildModelFromMemoryBook(
   lastTrainingEvaluationLeakCount = countEvaluationCatsInTraining(rawEntries);
   const entries = assertNoEvaluationCatsInTraining(rawEntries);
 
+  const learnerCount = includeLearnerExamples ? memoryState.studentExamples.length : 0;
+  const evalInTraining = countEvaluationCatsInTraining(entries);
+  console.log('[Training] Initial memory examples:', initialMemoryBookCats.length);
+  console.log('[Training] Learner examples:', learnerCount);
+  console.log('[Training] Negative examples:', negativeExamples.length);
+  console.log('[Training] Evaluation cats in training:', evalInTraining);
+
   if (isDebugMode()) {
-    console.log('[Meow Gate] Training loaded:', {
+    console.log('[Meow Gate] Training loaded (verbose):', {
       initialMemoryCats: initialMemoryBookCats.length,
-      learnerMemoryCats: includeLearnerExamples ? memoryState.studentExamples.length : 0,
+      learnerMemoryCats: learnerCount,
       negativeExamples: negativeExamples.length,
-      evaluationCatsInTraining: countEvaluationCatsInTraining(entries),
+      evaluationCatsInTraining: evalInTraining,
     });
   }
 
@@ -323,78 +316,92 @@ export async function rebuildModelFromMemoryBook(
     );
   }
 
-  await calibrateThresholds();
   await runModelSanityCheck();
 
   isModelReady = true;
   setStatus('ready', getTrainingMessageForProgress(100));
 }
 
-async function getNearestExamples(image: string, k = KNN_K): Promise<NearestExample[]> {
-  const query = await imageToVector(image);
-  return rankBySimilarity(query).slice(0, k);
-}
-
-/** Nearest Memory Book cats only — excludes negatives and evaluation cats */
-export function getMemoryBookNearestExamples(
-  prediction: GatePrediction,
-  limit = 3,
-): NearestExample[] {
+export function getMemoryBookNearestExamples(prediction: GatePrediction, limit = 3): NeighborResult[] {
   return prediction.nearestExamples
-    .filter(
-      (item) =>
-        item.label === 'cat' &&
-        (item.source === 'initial-memory' || item.source === 'learner-memory'),
-    )
+    .filter((n) => n.label === 'cat' && (n.source === 'initial' || n.source === 'learner'))
     .slice(0, limit);
 }
 
-export async function predictGate(image: string): Promise<GatePrediction> {
+export type PredictGateMeta = {
+  /** Logged in dev as `[Prediction] Target:` */
+  logTargetId?: string;
+};
+
+export async function predictGate(image: string, meta?: PredictGateMeta): Promise<GatePrediction> {
   if (!isModelReady) throw new Error('Model is not ready');
 
-  const nearestExamples = await getNearestExamples(image, KNN_K);
-  const metrics = computePredictionMetrics(nearestExamples);
-  const { catVoteRatio, nearestSimilarity } = metrics;
-  let { confidence } = metrics;
-  const gateState = resolveGateState(catVoteRatio, nearestSimilarity, metrics.nearest);
+  const queryVector = await imageToVector(image);
+  const fullRanked = rankBySimilarity(queryVector);
+  const top = fullRanked.slice(0, KNN_K);
+  const metrics = computePredictionMetrics(top);
+  const gateState = resolveKnnGateState(metrics.catVoteRatio, metrics.bestSimilarity);
+  const confidence = metrics.confidence;
+  const closestScored = findFirstMemoryBookCat(fullRanked);
 
-  if (gateState === 'open' && metrics.nearest?.source === 'initial-memory') {
-    confidence = Math.max(confidence, 0.78);
-  }
+  const nearestExamples = top.map(toNeighborResult);
+  const closestMemoryExample = closestScored ? toNeighborResult(closestScored) : undefined;
 
   const prediction: GatePrediction = {
     gateState,
     confidence,
     confidenceLabel: confidenceLabelFromScore(confidence, gateState),
-    nearestExamples: metrics.top,
-    catVoteRatio,
-    nearestSimilarity,
+    nearestExamples,
+    closestMemoryExample,
+    catVoteRatio: metrics.catVoteRatio,
+    bestSimilarity: metrics.bestSimilarity,
   };
 
   lastPrediction = prediction;
 
+  if (import.meta.env.DEV && meta?.logTargetId) {
+    console.log('[Prediction] Target:', meta.logTargetId);
+    console.log(
+      '[Prediction] Nearest examples:',
+      nearestExamples.map((e) => ({
+        id: e.id,
+        source: e.source,
+        label: e.label,
+        similarity: Number(e.similarity.toFixed(4)),
+      })),
+    );
+    console.log('[Prediction] Gate:', gateState, 'confidence:', Number(confidence.toFixed(4)));
+    if (closestMemoryExample) {
+      console.log(
+        '[Prediction] Closest Memory Book example:',
+        closestMemoryExample.id,
+        Number(closestMemoryExample.similarity.toFixed(4)),
+      );
+    }
+  }
+
   if (isDebugMode()) {
     console.log('[Meow Gate] Prediction:', {
-      nearestExamples: metrics.top.map((item) => ({
+      nearestExamples: nearestExamples.map((item) => ({
         id: item.id,
         source: item.source,
         label: item.label,
         similarity: item.similarity.toFixed(3),
       })),
       memoryBookNearest: getMemoryBookNearestExamples(prediction).map((item) => item.id),
-      catVoteRatio: catVoteRatio.toFixed(3),
-      nearestSimilarity: nearestSimilarity.toFixed(3),
+      catVoteRatio: metrics.catVoteRatio.toFixed(3),
+      bestSimilarity: metrics.bestSimilarity.toFixed(3),
       confidence: confidence.toFixed(3),
       gateState,
-      calibration,
+      closestMemoryId: closestMemoryExample?.id,
     });
   }
 
   return prediction;
 }
 
-export async function predictCat(image: string): Promise<GatePrediction> {
-  return predictGate(image);
+export async function predictCat(image: string, meta?: PredictGateMeta): Promise<GatePrediction> {
+  return predictGate(image, meta);
 }
 
 /** Clear module singleton between sessions (e.g. full page reload). */
@@ -403,10 +410,5 @@ export function clearSessionModelSingleton(): void {
   isModelReady = false;
   lastPrediction = null;
   lastTrainingEvaluationLeakCount = 0;
-  calibration = {
-    openThreshold: 0.55,
-    pauseThreshold: 0.45,
-    standardSelfSimilarity: 0.6,
-  };
   setStatus('idle', 'Ready to compare.');
 }

@@ -34,7 +34,7 @@ export const evaluationCats: EvaluationCat[] = [
     role: 'evaluation-only',
     name: 'Pirate Cat',
     type: 'pirate',
-    challenge: 'This cat has an accessory, so Meow Gate may focus on the wrong clue.',
+    challenge: 'This cat has an accessory, so Meow Gate may focus on an unexpected clue.',
   },
   {
     id: 'roundcat',

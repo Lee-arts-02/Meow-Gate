@@ -137,12 +137,7 @@ function BuilderFlow({
 
       case 'teach':
         return (
-          <TeachByDrawing
-            memoryState={memoryState}
-            evaluationCatType={evaluationCat.type}
-            onSave={handleMemorySave}
-            onContinue={() => setScene('test')}
-          />
+          <TeachByDrawing memoryState={memoryState} onSave={handleMemorySave} onContinue={() => setScene('test')} />
         );
 
       case 'test':
@@ -174,7 +169,7 @@ export function BuilderPage() {
   const [memoryState, setMemoryState] = useState<CatMemoryState>(() => getInitialMemoryState());
 
   return (
-    <CatModelProvider memoryState={memoryState}>
+    <CatModelProvider>
       <BuilderFlow memoryState={memoryState} setMemoryState={setMemoryState} />
     </CatModelProvider>
   );

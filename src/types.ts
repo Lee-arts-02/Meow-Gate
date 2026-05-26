@@ -25,6 +25,13 @@ export type GateResult = {
   uncertainParts: string[];
   friendlyReason: string;
   nearestExamples?: NearestExampleInfo[];
+  /** True when the closest KNN neighbor is a not-cat training image (not part of the Memory Book). */
+  knnNearestIsNotCat?: boolean;
+  /** KNN cosine similarity of the nearest training neighbor overall. */
+  bestSimilarity?: number;
+  /** Closest positive Memory Book match used for comparison UI. */
+  closestMemoryImage?: string;
+  closestMemorySimilarity?: number;
 };
 
 export type StudentExample = {
@@ -32,6 +39,8 @@ export type StudentExample = {
   label: string;
   imageData: string;
   createdAt: number;
+  /** Learner drawings saved from Add New Drawing — Memory Book only, never evaluation cats. */
+  source?: 'learner';
 };
 
 /** Serializable snapshot for sharing a trained Cat Gate (no evaluation-cat data). */

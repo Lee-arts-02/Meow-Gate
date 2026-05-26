@@ -1,21 +1,14 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { useCatModel } from '../context/CatModelContext';
-import { evaluationCats } from '../data/evaluationCats';
-import type { CatImageType, CatMemoryState, StudentExample } from '../types';
-import { updateCoverageWithStudentExample } from '../logic/coverage';
+import { initialMemoryBookCats } from '../data/memoryBookCats';
+import type { CatMemoryState, StudentExample } from '../types';
 import { CatCard } from './CatCard';
 import { DrawingCanvas, type DrawingResult } from './DrawingCanvas';
 import { SketchButton } from './SketchButton';
 
-const INSPIRATION_CATS = evaluationCats;
-
-const INSPIRATION_LABEL: Record<'midnight' | 'oneEar' | 'pirate' | 'round', string> = {
-  midnight: 'A dark cat',
-  oneEar: 'A cat with one visible ear',
-  pirate: 'A cat with something surprising',
-  round: 'A cat with a round body',
-};
+/** Memory Book originals only — not evaluation-only test cats. */
+const INSPIRATION_FROM_MEMORY = initialMemoryBookCats.filter((c) => c.id !== 'standardcat').slice(0, 4);
 
 const IDEA_CHIPS = [
   'different ears',
@@ -29,22 +22,35 @@ const IDEA_CHIPS = [
 
 type TeachByDrawingProps = {
   memoryState: CatMemoryState;
-  evaluationCatType: Exclude<CatImageType, 'standard'>;
   onSave: (state: CatMemoryState) => void;
   onContinue: () => void;
 };
 
-export function TeachByDrawing({
-  memoryState,
-  evaluationCatType,
-  onSave,
-  onContinue,
-}: TeachByDrawingProps) {
-  const { trainModel, markNeedsTraining, trainingStatus, trainingProgress, canTest, statusMessage } =
-    useCatModel();
+function newLearnerId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `learner-${crypto.randomUUID()}`;
+  }
+  return `learner-${Date.now()}`;
+}
+
+export function TeachByDrawing({ memoryState, onSave, onContinue }: TeachByDrawingProps) {
+  const {
+    trainModel,
+    markNeedsTraining,
+    trainingStatus,
+    trainingProgress,
+    modelStatus,
+    canTest,
+    statusMessage,
+  } = useCatModel();
   const [drawingOpen, setDrawingOpen] = useState(true);
   const [selectedIdeas, setSelectedIdeas] = useState<Set<string>>(new Set());
   const [savedMessage, setSavedMessage] = useState('');
+
+  const showTrainAgain =
+    modelStatus === 'needs-training' &&
+    memoryState.studentExamples.length > 0 &&
+    trainingStatus === 'complete';
 
   const toggleIdea = (label: string) => {
     setSelectedIdeas((prev) => {
@@ -57,24 +63,28 @@ export function TeachByDrawing({
 
   const handleSave = (result: DrawingResult) => {
     const example: StudentExample = {
-      id: `student-${Date.now()}`,
-      label: 'Your cat',
+      id: newLearnerId(),
+      label: 'cat',
       imageData: result.imageDataUrl,
       createdAt: Date.now(),
+      source: 'learner',
     };
     const updatedExamples = [...memoryState.studentExamples, example];
     onSave({
+      ...memoryState,
       studentExamples: updatedExamples,
-      coverage: updateCoverageWithStudentExample(
-        memoryState.coverage,
-        evaluationCatType,
-        updatedExamples.length,
-      ),
     });
     markNeedsTraining();
     setSavedMessage('Your drawing was added to the Memory Book.');
     setDrawingOpen(false);
     setSelectedIdeas(new Set());
+
+    if (import.meta.env.DEV) {
+      console.log('[Meow Gate] Add drawing:', {
+        learnerExamplesCount: updatedExamples.length,
+        modelStatus: 'needs-training',
+      });
+    }
   };
 
   if (drawingOpen) {
@@ -88,15 +98,15 @@ export function TeachByDrawing({
         <div className="text-center">
           <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Cats can look different.</h2>
           <p className="story-text mx-auto max-w-2xl text-ink/75">
-            Meow Gate has learned from the cats in its Memory Book. But cats in the world can look many
-            different ways. Can you help by drawing new examples?
+            Meow Gate learns from the Memory Book. You can add your own drawings so it can compare new
+            cats with more kinds of examples.
           </p>
         </div>
 
         <div>
           <p className="mb-2 text-center font-display text-sm text-ink/70">Different possibilities</p>
           <div className="mx-auto grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
-            {INSPIRATION_CATS.map((cat) => (
+            {INSPIRATION_FROM_MEMORY.map((cat) => (
               <div
                 key={cat.id}
                 className="sketch-card flex flex-col items-center gap-2 p-3 text-center"
@@ -109,13 +119,13 @@ export function TeachByDrawing({
                     draggable={false}
                   />
                 </div>
-                <p className="text-xs leading-snug text-ink/80">{INSPIRATION_LABEL[cat.type]}</p>
+                <p className="text-xs leading-snug text-ink/80">Another style from the Memory Book</p>
               </div>
             ))}
           </div>
           <p className="note-panel mx-auto mt-3 max-w-2xl p-3 text-center text-xs text-ink/70">
-            These cats show different possibilities. Your own drawing will become the new Memory Book
-            example.
+            These pictures are from the original Memory Book. Your own drawing will be saved as a new
+            example there too.
           </p>
         </div>
 
@@ -154,15 +164,58 @@ export function TeachByDrawing({
     <section className="flex flex-1 flex-col gap-6">
       <div className="text-center">
         <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Cats can look different.</h2>
+        <p className="story-text mx-auto max-w-xl text-ink/75">
+          Meow Gate learns from the Memory Book. Now Meow Gate can compare new cats with your examples
+          after you train it.
+        </p>
       </div>
-      {memoryState.studentExamples.length > 0 && (
-        <div className="flex flex-wrap justify-center gap-3">
-          {memoryState.studentExamples.map((ex, i) => (
-            <CatCard key={ex.id} studentExample={ex} hideLabel rotation={[2, -2, 1][i % 3] ?? 0} />
-          ))}
+
+      <div className="book-page mx-auto w-full max-w-4xl space-y-8 p-5 md:p-6">
+        <div>
+          <h3 className="font-display mb-3 text-lg text-ink md:text-xl">Original examples</h3>
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+            {initialMemoryBookCats.map((cat, i) => (
+              <CatCard
+                key={cat.id}
+                memoryCat={cat}
+                hideLabel
+                rotation={[-2, 2, -1, 3, -2, 1, -1, 2, -2][i] ?? 0}
+              />
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <h3 className="font-display mb-3 text-lg text-ink md:text-xl">Your new examples</h3>
+          {memoryState.studentExamples.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-ink/20 bg-white/60 p-6 text-center text-sm text-ink/70">
+              Your drawings will appear here.
+            </p>
+          ) : (
+            <div className="flex flex-wrap justify-center gap-3">
+              {memoryState.studentExamples.map((ex, i) => (
+                <CatCard key={ex.id} studentExample={ex} hideLabel rotation={[2, -2, 1][i % 3] ?? 0} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {savedMessage && (
+        <div className="note-panel mx-auto max-w-lg space-y-2 p-4 text-center text-sm">
+          <p>{savedMessage}</p>
+          <p className="text-ink/80">
+            Train Meow Gate so it can compare new cats with your examples.
+          </p>
         </div>
       )}
-      {savedMessage && <p className="note-panel mx-auto max-w-lg p-4 text-center text-sm">{savedMessage}</p>}
+
+      {modelStatus === 'needs-training' && trainingStatus === 'complete' && (
+        <p className="note-panel mx-auto max-w-lg p-4 text-center text-sm text-ink/80">
+          Meow Gate needs to read the updated Memory Book.
+        </p>
+      )}
+
       {(trainingStatus === 'training' || trainingStatus === 'complete') && (
         <div className="mx-auto w-full max-w-lg">
           <p className="mb-2 text-center text-sm text-ink/70">{statusMessage}</p>
@@ -171,6 +224,7 @@ export function TeachByDrawing({
           </div>
         </div>
       )}
+
       <div className="flex flex-col items-center gap-3">
         <SketchButton variant="secondary" onClick={() => setDrawingOpen(true)}>
           Draw another cat
@@ -180,11 +234,18 @@ export function TeachByDrawing({
           onClick={() => trainModel(memoryState)}
           disabled={memoryState.studentExamples.length === 0 || trainingStatus === 'training'}
         >
-          {trainingStatus === 'training' ? 'Training…' : 'Finish and train Meow Gate'}
+          {trainingStatus === 'training'
+            ? 'Training…'
+            : showTrainAgain
+              ? 'Train Again'
+              : 'Train Meow Gate'}
         </SketchButton>
         <SketchButton variant="primary" onClick={onContinue} disabled={!canTest}>
           Test the Gate
         </SketchButton>
+        {!canTest && memoryState.studentExamples.length > 0 && (
+          <p className="max-w-md text-center text-xs text-ink/65">Train Meow Gate before testing.</p>
+        )}
       </div>
     </section>
   );

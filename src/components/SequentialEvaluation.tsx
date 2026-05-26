@@ -3,13 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCatModel } from '../context/CatModelContext';
 import type { EvaluationCat } from '../data/evaluationCats';
 import {
-  buildMemoryExamples,
-  findClosestMemoryCat,
-  rankMemoryExamples,
+  neighborResultToClosestMemoryResult,
   type ClosestMemoryResult,
 } from '../logic/findClosestMemoryCat';
 import { clueTagsFromVisualClues } from '../logic/findSimilarCats';
 import { gateResultToGateState } from '../logic/predictGate';
+import type { GatePrediction } from '../ml/modelTypes';
 import type { CatMemoryState, GateResult } from '../types';
 import { JudgmentStage } from './JudgmentStage';
 import { JudgmentStatusCard } from './JudgmentStatusCard';
@@ -27,6 +26,17 @@ type SequentialEvaluationProps = {
 
 type Phase = 'intro' | 'walking' | 'predicting' | 'result' | 'summary';
 
+function emptyFallbackPrediction(): GatePrediction {
+  return {
+    gateState: 'pause',
+    confidence: 0,
+    confidenceLabel: 'low',
+    nearestExamples: [],
+    catVoteRatio: 0,
+    bestSimilarity: 0,
+  };
+}
+
 export function SequentialEvaluation({
   evaluationCats,
   memoryState,
@@ -37,17 +47,38 @@ export function SequentialEvaluation({
   const { predictEvaluation, canTest } = useCatModel();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('intro');
-  const [currentResult, setCurrentResult] = useState<GateResult | null>(null);
+  const [evalBundle, setEvalBundle] = useState<{
+    result: GateResult;
+    prediction: GatePrediction;
+  } | null>(null);
   const [stripResults, setStripResults] = useState<StripResultItem[]>([]);
   const [showComparison, setShowComparison] = useState(false);
-  const [comparisonLoading, setComparisonLoading] = useState(false);
-  const [closestResult, setClosestResult] = useState<ClosestMemoryResult | null>(null);
-  const [rankedResults, setRankedResults] = useState<ClosestMemoryResult[]>([]);
 
   const hasArrivedRef = useRef(false);
   const currentCat = evaluationCats[currentIndex];
-  const memoryExamples = useMemo(() => buildMemoryExamples(memoryState), [memoryState]);
+  const currentResult = evalBundle?.result ?? null;
   const isLastCat = currentIndex >= evaluationCats.length - 1;
+
+  const closestResult = useMemo((): ClosestMemoryResult | null => {
+    if (!showComparison || !evalBundle?.prediction) return null;
+    const pred = evalBundle.prediction;
+    const cm = pred.closestMemoryExample;
+    if (cm && (cm.source === 'initial' || cm.source === 'learner')) {
+      return neighborResultToClosestMemoryResult(cm);
+    }
+    const first = pred.nearestExamples.find(
+      (n) => n.label === 'cat' && (n.source === 'initial' || n.source === 'learner'),
+    );
+    return first ? neighborResultToClosestMemoryResult(first) : null;
+  }, [showComparison, evalBundle?.prediction]);
+
+  const rankedResults = useMemo((): ClosestMemoryResult[] => {
+    if (!showComparison || !evalBundle?.prediction) return [];
+    return evalBundle.prediction.nearestExamples
+      .filter((n) => n.label === 'cat' && (n.source === 'initial' || n.source === 'learner'))
+      .slice(0, 3)
+      .map(neighborResultToClosestMemoryResult);
+  }, [showComparison, evalBundle?.prediction]);
 
   const summaryCounts = useMemo(() => {
     return stripResults.reduce(
@@ -69,57 +100,51 @@ export function SequentialEvaluation({
   }, [phase, currentCat, currentIndex]);
 
   useEffect(() => {
-    if (!showComparison || !currentCat || !currentResult) return;
-    let cancelled = false;
-    void (async () => {
-      setComparisonLoading(true);
-      try {
-        const [closest, ranked] = await Promise.all([
-          findClosestMemoryCat(currentCat.image, memoryExamples),
-          rankMemoryExamples(currentCat.image, memoryExamples, 3),
-        ]);
-        if (!cancelled) {
-          setClosestResult(closest);
-          setRankedResults(ranked);
-        }
-      } finally {
-        if (!cancelled) setComparisonLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [showComparison, currentCat, currentResult, memoryExamples]);
-
-  useEffect(() => {
     if (phase !== 'predicting' || !currentCat) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await predictEvaluation(currentCat.image);
+        const { result, prediction } = await predictEvaluation(currentCat.image, currentCat.id);
         if (cancelled) return;
-        setCurrentResult(res);
+        setEvalBundle({ result, prediction });
         setStripResults((prev) => {
-          if (prev.some((r) => r.catId === currentCat.id)) return prev;
-          return [...prev, { catId: currentCat.id, image: currentCat.image, result: res }];
+          if (prev.some((r) => r.evaluationCat.id === currentCat.id)) return prev;
+          return [
+            ...prev,
+            {
+              evaluationCat: { id: currentCat.id, image: currentCat.image },
+              result,
+              prediction,
+            },
+          ];
         });
         setPhase('result');
       } catch {
         if (cancelled) return;
+        console.warn('Using fallback prediction because KNN model is unavailable.');
+        const prediction = emptyFallbackPrediction();
         const fallback: GateResult = {
           guess: 'unsure',
-          confidence: 0.2,
+          confidence: 0,
           confidenceLabel: 'low',
           gateState: 'pause',
           gateOpen: false,
           visualClues: [],
           uncertainParts: [],
           friendlyReason: 'Meow Gate could not finish this guess.',
+          bestSimilarity: 0,
         };
-        setCurrentResult(fallback);
+        setEvalBundle({ result: fallback, prediction });
         setStripResults((prev) => {
-          if (prev.some((r) => r.catId === currentCat.id)) return prev;
-          return [...prev, { catId: currentCat.id, image: currentCat.image, result: fallback }];
+          if (prev.some((r) => r.evaluationCat.id === currentCat.id)) return prev;
+          return [
+            ...prev,
+            {
+              evaluationCat: { id: currentCat.id, image: currentCat.image },
+              result: fallback,
+              prediction,
+            },
+          ];
         });
         setPhase('result');
       }
@@ -143,7 +168,7 @@ export function SequentialEvaluation({
       return;
     }
     setCurrentIndex((i) => i + 1);
-    setCurrentResult(null);
+    setEvalBundle(null);
     setPhase('walking');
   }, [currentResult, isLastCat]);
 
@@ -151,7 +176,7 @@ export function SequentialEvaluation({
     return (
       <section className="flex flex-1 flex-col gap-6">
         <p className="note-panel mx-auto max-w-lg p-4 text-center text-ink/80">
-          Meow Gate needs to finish learning first.
+          Train Meow Gate before testing.
         </p>
       </section>
     );
@@ -161,9 +186,9 @@ export function SequentialEvaluation({
     return (
       <section className="flex flex-1 flex-col gap-6">
         <div className="text-center">
-          <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Test the New Memory Book</h2>
+          <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Test the Memory Book</h2>
           <p className="story-text mx-auto max-w-xl text-ink/75">
-            Now let&apos;s see how Meow Gate responds to cats it has not seen before.
+            Let&apos;s test cats Meow Gate has not seen before.
           </p>
         </div>
         <div className="flex justify-center">
@@ -221,7 +246,7 @@ export function SequentialEvaluation({
   return (
     <section className="flex flex-1 flex-col gap-6">
       <div className="text-center">
-        <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Test the New Memory Book</h2>
+        <h2 className="font-display mb-2 text-2xl text-ink md:text-3xl">Test the Memory Book</h2>
         <p className="story-text text-ink/75">
           Cat {currentIndex + 1} of {evaluationCats.length}
         </p>
@@ -243,7 +268,7 @@ export function SequentialEvaluation({
           variant="preset"
           gateOpen={gateState === 'open'}
           gateState={gateState}
-          resetKey={`${currentCat.id}-${currentIndex}`}
+          resetKey={currentCat.id}
           onArrival={phase === 'walking' ? handleWalkArrived : undefined}
         />
       </div>
@@ -261,6 +286,12 @@ export function SequentialEvaluation({
             <p className="mt-2 text-center text-sm text-ink/70">
               Confidence: {Math.round(Math.min(1, Math.max(0, currentResult.confidence)) * 100)}%
             </p>
+            {typeof currentResult.bestSimilarity === 'number' && (
+              <p className="mt-1 text-center text-sm text-ink/70">
+                Nearest training match:{' '}
+                {Math.round(Math.min(1, Math.max(0, currentResult.bestSimilarity)) * 100)}%
+              </p>
+            )}
             <p className="mt-1 text-center text-[11px] italic text-ink/55">This is Meow Gate&apos;s guess.</p>
           </div>
           {!showComparison ? (
@@ -280,10 +311,11 @@ export function SequentialEvaluation({
                 closestResult={closestResult}
                 rankedResults={rankedResults}
                 nearestExamples={currentResult.nearestExamples}
+                knnNearestIsNotCat={currentResult.knnNearestIsNotCat}
                 clueTags={clueTagsFromVisualClues(currentResult.visualClues)}
                 gateOpens={gateState === 'open'}
                 hasStudentExamples={memoryState.studentExamples.length > 0}
-                loading={comparisonLoading}
+                loading={false}
                 onClose={() => setShowComparison(false)}
               />
               <div className="mt-4 flex justify-center">

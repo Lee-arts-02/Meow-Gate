@@ -11,6 +11,8 @@ type SimilarityExplanationPanelProps = {
   closestResult: ClosestMemoryResult | null;
   rankedResults?: ClosestMemoryResult[];
   nearestExamples?: NearestExampleInfo[];
+  /** KNN top neighbor is a not-cat training image — not part of the Memory Book. */
+  knnNearestIsNotCat?: boolean;
   clueTags?: string[];
   gateOpens?: boolean;
   hasStudentExamples?: boolean;
@@ -25,6 +27,7 @@ export function SimilarityExplanationPanel({
   closestResult,
   rankedResults = [],
   nearestExamples = [],
+  knnNearestIsNotCat = false,
   clueTags = [],
   gateOpens = true,
   hasStudentExamples = false,
@@ -47,6 +50,14 @@ export function SimilarityExplanationPanel({
           <p className="mt-1 text-sm text-ink/65">
             Meow Gate compared this cat with examples in its Memory Book.
           </p>
+          {closestResult && (
+            <p className="mt-2 text-sm text-ink/75">This was the closest example it found.</p>
+          )}
+          {knnNearestIsNotCat && (
+            <p className="mt-3 rounded-lg border border-ink/15 bg-pastel-blue/20 p-3 text-sm text-ink/85">
+              Meow Gate did not find a close cat example in the Memory Book.
+            </p>
+          )}
         </div>
         {onClose && (
           <SketchButton variant="ghost" size="sm" onClick={onClose}>
@@ -55,15 +66,32 @@ export function SimilarityExplanationPanel({
         )}
       </div>
 
-      <WhyComparisonPanel
-        targetImage={targetImage}
-        targetLabel={targetLabel}
-        closestResult={closestResult}
-        rankedResults={rankedResults}
-        nearestExamples={nearestExamples}
-        clueTags={clueTags}
-        loading={loading}
-      />
+      {loading ? (
+        <WhyComparisonPanel
+          targetImage={targetImage}
+          targetLabel={targetLabel}
+          closestResult={null}
+          rankedResults={[]}
+          nearestExamples={nearestExamples}
+          clueTags={clueTags}
+          loading
+        />
+      ) : closestResult ? (
+        <WhyComparisonPanel
+          targetImage={targetImage}
+          targetLabel={targetLabel}
+          closestResult={closestResult}
+          rankedResults={rankedResults}
+          nearestExamples={nearestExamples}
+          clueTags={clueTags}
+          loading={false}
+        />
+      ) : (
+        <p className="story-text mt-4 text-ink/75">
+          No close Memory Book cat found for a side-by-side picture. Meow Gate still compared this
+          cat with its training examples to make a guess.
+        </p>
+      )}
 
       <motion.div
         className="note-panel mt-6 space-y-2 p-4 text-sm text-ink/75"

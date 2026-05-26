@@ -10,6 +10,7 @@ type SimilarityExampleCardProps = {
 
 function sourceCaption(sourceType?: 'initial' | 'learner'): string | null {
   if (sourceType === 'learner') return 'Your example';
+  if (sourceType === 'initial') return 'Memory Book example';
   return null;
 }
 

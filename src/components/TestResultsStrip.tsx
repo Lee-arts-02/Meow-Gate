@@ -1,10 +1,11 @@
+import type { GatePrediction } from '../ml/modelTypes';
 import type { GateResult } from '../types';
 import { TestResultCard } from './TestResultCard';
 
 export type StripResultItem = {
-  catId: string;
-  image: string;
+  evaluationCat: { id: string; image: string };
   result: GateResult;
+  prediction: GatePrediction;
 };
 
 type TestResultsStripProps = {
@@ -20,7 +21,12 @@ export function TestResultsStrip({ results }: TestResultsStripProps) {
       ) : (
         <div className="flex flex-wrap justify-center gap-3">
           {results.map((item) => (
-            <TestResultCard key={item.catId} image={item.image} result={item.result} />
+            <TestResultCard
+              key={item.evaluationCat.id}
+              evaluationCat={item.evaluationCat}
+              result={item.result}
+              prediction={item.prediction}
+            />
           ))}
         </div>
       )}

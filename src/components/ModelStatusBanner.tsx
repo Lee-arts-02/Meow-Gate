@@ -1,8 +1,8 @@
-import { evaluationCats } from '../data/evaluationCats';
 import { useCatModel } from '../context/CatModelContext';
+import { evaluationCats } from '../data/evaluationCats';
 
 export function ModelStatusBanner() {
-  const { debugMode, debugInfo } = useCatModel();
+  const { debugMode, debugInfo, modelStatus } = useCatModel();
   if (!debugMode) return null;
 
   const leakCount = debugInfo.evaluationCatsInTraining ?? 0;
@@ -29,6 +29,7 @@ export function ModelStatusBanner() {
           <p className={hasLeak ? 'font-display text-red-800' : ''}>
             Evaluation cats in training: {leakCount} (should be 0)
           </p>
+          <p>Builder dataset status: {modelStatus}</p>
         </div>
 
         <div>

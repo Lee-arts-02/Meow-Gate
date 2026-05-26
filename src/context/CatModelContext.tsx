@@ -7,22 +7,34 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { predictUserDrawingGate, predictGateFromCurrentModel } from '../logic/predictGate';
+import { predictUserDrawingGate, predictionToGateResult } from '../logic/predictGate';
 import {
+  clearSessionModelSingleton,
   getDebugInfo,
-  getIsModelReady,
   getStatusMessage,
   getTrainingMessageForProgress,
   initializeCatModel,
   isDebugMode,
+  predictGate,
   rebuildModelFromMemoryBook,
 } from '../ml/catKnnModel';
+import type { GatePrediction } from '../ml/modelTypes';
 import type { CatMemoryState, DrawingAnalysisInput, GateResult } from '../types';
 
 export type TrainingStatus = 'not-started' | 'training' | 'complete' | 'error';
 
+/** Builder flow: Memory Book changed after last successful train, or no train yet. */
+export type MeowGateDatasetStatus = 'needs-training' | 'trained';
+
+export type EvaluationPredictPayload = {
+  result: GateResult;
+  prediction: GatePrediction;
+};
+
 type CatModelContextValue = {
   trainingStatus: TrainingStatus;
+  /** Meow Gate KNN is in sync with the current Memory Book and may be used for evaluation. */
+  modelStatus: MeowGateDatasetStatus;
   modelReady: boolean;
   trainingProgress: number;
   statusMessage: string;
@@ -34,22 +46,16 @@ type CatModelContextValue = {
     memoryState: CatMemoryState,
     drawingMeta: DrawingAnalysisInput,
   ) => Promise<GateResult>;
-  predictEvaluation: (image: string) => Promise<GateResult>;
+  predictEvaluation: (image: string, evaluationCatId?: string) => Promise<EvaluationPredictPayload>;
   canTest: boolean;
   debugMode: boolean;
   debugInfo: ReturnType<typeof getDebugInfo>;
 };
-
 const CatModelContext = createContext<CatModelContextValue | null>(null);
 
-export function CatModelProvider({
-  memoryState,
-  children,
-}: {
-  memoryState: CatMemoryState;
-  children: ReactNode;
-}) {
+export function CatModelProvider({ children }: { children: ReactNode }) {
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>('not-started');
+  const [modelStatus, setModelStatus] = useState<MeowGateDatasetStatus>('needs-training');
   const [modelReady, setModelReady] = useState(false);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState(getStatusMessage());
@@ -63,17 +69,21 @@ export function CatModelProvider({
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       await initializeCatModel();
+      clearSessionModelSingleton();
       if (cancelled) return;
-      await rebuildModelFromMemoryBook(memoryState, { includeLearnerExamples: false });
-      if (cancelled) return;
-      syncStatus();
-      setTrainingStatus(memoryState.studentExamples.length > 0 ? 'not-started' : 'complete');
-      setModelReady(getIsModelReady());
+      setTrainingStatus('not-started');
+      setModelStatus('needs-training');
+      setModelReady(false);
+      setTrainingProgress(0);
+      setStatusMessage(getStatusMessage());
+      setDebugInfo(getDebugInfo());
     })();
-    return () => { cancelled = true; };
-  }, [memoryState, syncStatus]);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const rebuildModel = useCallback(async (state: CatMemoryState, includeLearnerExamples = false) => {
     await rebuildModelFromMemoryBook(state, { includeLearnerExamples });
@@ -81,7 +91,7 @@ export function CatModelProvider({
   }, [syncStatus]);
 
   const markNeedsTraining = useCallback(() => {
-    setTrainingStatus('not-started');
+    setModelStatus('needs-training');
     setModelReady(false);
     setTrainingProgress(0);
   }, []);
@@ -99,11 +109,13 @@ export function CatModelProvider({
       });
       setTrainingProgress(100);
       setTrainingStatus('complete');
+      setModelStatus('trained');
       setModelReady(true);
       syncStatus();
     } catch (error) {
       setTrainingStatus('error');
       setModelReady(false);
+      setModelStatus('needs-training');
       syncStatus();
       throw error;
     }
@@ -112,21 +124,28 @@ export function CatModelProvider({
   const predictUserDrawing = useCallback(
     async (image: string, state: CatMemoryState, drawingMeta: DrawingAnalysisInput) =>
       predictUserDrawingGate(image, state, drawingMeta, {
-        includeLearnerExamples: trainingStatus === 'complete',
+        includeLearnerExamples: modelStatus === 'trained' && state.studentExamples.length > 0,
       }),
-    [trainingStatus],
+    [modelStatus],
   );
 
-  const predictEvaluation = useCallback(async (image: string) => {
-    if (!modelReady || trainingStatus !== 'complete') {
-      throw new Error('Meow Gate needs to finish learning first.');
-    }
-    return predictGateFromCurrentModel(image);
-  }, [modelReady, trainingStatus]);
-
+  const predictEvaluation = useCallback(
+    async (image: string, evaluationCatId?: string) => {
+      if (!modelReady || trainingStatus !== 'complete' || modelStatus !== 'trained') {
+        throw new Error('Train Meow Gate before testing.');
+      }
+      const prediction = await predictGate(
+        image,
+        evaluationCatId ? { logTargetId: evaluationCatId } : undefined,
+      );
+      return { prediction, result: predictionToGateResult(prediction) };
+    },
+    [modelReady, trainingStatus, modelStatus],
+  );
   const value = useMemo(
     () => ({
       trainingStatus,
+      modelStatus,
       modelReady,
       trainingProgress,
       statusMessage,
@@ -135,12 +154,13 @@ export function CatModelProvider({
       markNeedsTraining,
       predictUserDrawing,
       predictEvaluation,
-      canTest: modelReady && trainingStatus === 'complete',
+      canTest: modelReady && trainingStatus === 'complete' && modelStatus === 'trained',
       debugMode: isDebugMode(),
       debugInfo,
     }),
     [
       trainingStatus,
+      modelStatus,
       modelReady,
       trainingProgress,
       statusMessage,

@@ -8,6 +8,7 @@ import {
   type SimilarityGalleryExample,
 } from '../logic/findSimilarCats';
 import type { NearestExampleInfo } from '../types';
+import { formatNearestExampleLabel } from '../logic/predictGate';
 import { SimilarityClueTags } from './SimilarityClueTags';
 import { SimilarityExamplesGallery } from './SimilarityExamplesGallery';
 import { UserMemoryOverlay } from './UserMemoryOverlay';
@@ -87,7 +88,7 @@ export function WhyComparisonPanel({
         />
 
         <ComparisonImagePanel
-          label="Closest Memory Book Cat"
+          label="Closest Memory Book example"
           image={closestResult.example.image}
           faded
           footer={
@@ -96,6 +97,9 @@ export function WhyComparisonPanel({
                 {formatSimilarityLabel(closestResult.label)}
               </p>
               <p className="text-xs text-ink/55">{formatSimilarityPercent(closestResult.score)}</p>
+              <p className="mt-1 text-[10px] text-ink/50">
+                {formatNearestExampleLabel(closestResult.example)}
+              </p>
             </>
           }
         />

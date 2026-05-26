@@ -147,6 +147,7 @@ export function SurpriseCatScene({
                 closestResult={closestResult}
                 rankedResults={rankedResults}
                 nearestExamples={result.nearestExamples}
+                knnNearestIsNotCat={result.knnNearestIsNotCat}
                 clueTags={clueTagsFromVisualClues(result.visualClues)}
                 gateOpens={result.gateOpen}
                 hasStudentExamples={memoryState.studentExamples.length > 0}
